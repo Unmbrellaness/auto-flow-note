@@ -4,7 +4,8 @@
 > **无感捕捉 · 智能理解 · 自动成稿**  
 > 告别手动截图和繁琐整理。AutoFlowNote 像水流一样伴随你的操作，利用多模态 AI 自动将屏幕活动转化为结构清晰、重点突出的智能笔记与审计报告。
 
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)[![Python](https://img.shields.io/badge/python-3.8+-green.svg)](https://www.python.org/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.8+-green.svg)](https://www.python.org/)
 [![AI](https://img.shields.io/badge/AI-Qwen3.5--flash-purple.svg)](https://qwenlm.github.io/)
 
 ---
