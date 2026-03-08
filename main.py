@@ -25,7 +25,9 @@ from src.utils.config_loader import load_config
 from src.utils.logger import get_logger
 from src.capture.screen_capturer import ScreenCapturer
 from src.capture.change_detector import ChangeDetector
-from src.analyzer.vision_recorder import QwenVisionRecorder
+# 导入分析器模块以触发注册（工厂模式）
+from src.analyzer import vision_recorder, ollama_vision
+from src.analyzer.base import AnalyzerFactory
 
 
 logger = get_logger("main", log_file="logs/app.log")
@@ -135,23 +137,53 @@ class AutoFlowNoteApp:
         )
         
         # ========== AI 分析器 ==========
+        from src.analyzer.base import AnalyzerFactory
         aliyun_config = self.config.get('aliyun', {})
+        ollama_config = self.config.get('ollama', {})
         analyzer_config = self.config.get('analyzer', {})
         
-        self.analyzer = QwenVisionRecorder({
-            'api_key': aliyun_config.get('api_key'),
-            'model': aliyun_config.get('default_model', 'qwen-vl-max'),
+        # 根据配置选择分析器类型
+        analyzer_type = analyzer_config.get('type', 'qwen')  # 'qwen' 或 'ollama'
+        
+        # 构建基础配置
+        base_analyzer_config = {
             'temperature': analyzer_config.get('temperature', 0.1),
             'top_p': analyzer_config.get('top_p', 0.8),
+            'min_relevance': analyzer_config.get('min_relevance', 3),
+            'save_all_responses': analyzer_config.get('save_all_responses', True),
             'topic_file': 'topic.txt',
-            # 日志路径在工作目录创建后更新
-        })
+        }
         
-        if not self.analyzer.initialize():
+        if analyzer_type == 'ollama':
+            # 使用 Ollama 本地模型
+            analyzer_config = {
+                **base_analyzer_config,
+                'base_url': ollama_config.get('base_url', 'http://localhost:11434'),
+                'model': ollama_config.get('model', 'qwen2.5-vl:2b'),
+                'timeout': analyzer_config.get('timeout', 120),
+            }
+            model_desc = ollama_config.get('model', 'qwen2.5-vl:2b')
+        else:
+            # 使用阿里云 Qwen API
+            analyzer_config = {
+                **base_analyzer_config,
+                'api_key': aliyun_config.get('api_key'),
+                'model': aliyun_config.get('default_model', 'qwen-vl-max'),
+            }
+            model_desc = aliyun_config.get('default_model', 'qwen-vl-max')
+        
+        # 使用工厂创建分析器
+        try:
+            self.analyzer = AnalyzerFactory.create(analyzer_type, analyzer_config)
+        except ValueError as e:
+            logger.error(f"创建分析器失败: {e}")
+            self.analyzer = None
+        
+        if self.analyzer and not self.analyzer.initialize():
             logger.warning("⚠️ AI 分析器初始化失败，将仅保存截图")
             self.analyzer = None
-        else:
-            logger.info(f"✅ AI 分析器初始化成功 | 模型: {self.config.get('aliyun', {}).get('default_model', 'qwen-vl-max')}")
+        elif self.analyzer:
+            logger.info(f"✅ AI 分析器初始化成功 | 类型: {analyzer_type} | 模型: {model_desc}")
     
     def _register_signal_handler(self):
         """注册信号处理"""

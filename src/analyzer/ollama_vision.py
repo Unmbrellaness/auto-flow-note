@@ -1,60 +1,57 @@
 """
-Qwen Vision 分析器 - 基于阿里云 Qwen-VL 模型
+Ollama 本地视觉分析器
+使用本地 Ollama 运行的模型（如 qwen2.5-vl, llava 等）进行图像分析
 """
-import os
 import time
-import base64
-import io
-from typing import Optional, Dict, Any
 from pathlib import Path
+from typing import Optional, Dict, Any
 from PIL import Image
 
-import dashscope
-from dashscope import MultiModalConversation
-
-from .base import BaseVisionAnalyzer, AnalyzerFactory
 from ..utils.logger import get_logger
+from .base import BaseVisionAnalyzer
+
+logger = get_logger("analyzer.ollama")
 
 
-logger = get_logger("qwen")
-
-
-def pil_image_to_base64(image: Image.Image) -> str:
-    """将 PIL Image 转换为 base64 字符串（data URL 格式）"""
-    buffered = io.BytesIO()
-    image.save(buffered, format="PNG")
-    img_str = base64.b64encode(buffered.getvalue()).decode()
-    return f"data:image/png;base64,{img_str}"
-
-
-class QwenVisionRecorder(BaseVisionAnalyzer):
+class OllamaVisionAnalyzer(BaseVisionAnalyzer):
     """
-    Qwen Vision 记录器
-    使用阿里云 Qwen-VL 模型分析屏幕截图
+    使用本地 Ollama 的视觉分析器
+    
+    支持的模型（需要在 Ollama 中已下载）：
+    - qwen2.5-vl 系列
+    - llava 系列
+    - moondream 系列
+    - 及其他支持视觉的模型
     """
     
     def __init__(self, config: Dict[str, Any]):
         """
-        初始化 Qwen 记录器
+        初始化 Ollama 分析器
         
         Args:
             config: 配置字典，应包含:
-                - api_key: 阿里云 API Key
-                - model: 模型名称 (默认 qwen-vl-max)
+                - base_url: Ollama 服务地址 (默认 http://localhost:11434)
+                - model: 模型名称 (默认 qwen2.5-vl:2b)
                 - temperature: 温度参数
-                - top_p: top_p 参数
+                - timeout: 请求超时时间
+                - min_relevance: 最小相关度阈值
+                - save_all_responses: 是否保存所有响应
+                - topic_file: 主题文件路径
+                - log_file: 日志文件路径
         """
         super().__init__(config)
         
-        self.api_key = config.get('api_key')
-        self.model_name = config.get('model', 'qwen3.5-flash')
+        # Ollama 配置
+        self.base_url = config.get('base_url', 'http://localhost:11434')
+        self.model_name = config.get('model', 'qwen2.5-vl:2b')
         self.temperature = config.get('temperature', 0.1)
         self.top_p = config.get('top_p', 0.8)
+        self.timeout = config.get('timeout', 120)
         
-        # 相关度阈值：只有 >= 此值的记录才会被保存
+        # 相关度阈值
         self.min_relevance = config.get('min_relevance', 3)
         
-        # 是否保存所有 AI 响应（用于调试）
+        # 是否保存所有 AI 响应
         self.save_all_responses = config.get('save_all_responses', True)
         
         # 文件路径配置
@@ -63,15 +60,29 @@ class QwenVisionRecorder(BaseVisionAnalyzer):
         
         # System Prompt
         self.system_prompt = config.get('system_prompt', self._default_system_prompt())
+        
+        # Ollama 客户端（延迟导入）
+        self._client = None
     
     @property
     def name(self) -> str:
-        return "QwenVisionRecorder"
+        return "OllamaVisionAnalyzer"
+    
+    def _get_client(self):
+        """延迟加载 Ollama 客户端"""
+        if self._client is None:
+            try:
+                from ollama import chat
+                self._client = chat
+            except ImportError:
+                logger.error("请安装 ollama 库: pip install ollama")
+                raise ImportError("需要安装 ollama 库: pip install ollama")
+        return self._client
     
     def _default_system_prompt(self) -> str:
         """默认的系统提示词"""
         return (
-            "你是一名“智能操作记录员”。你的任务是根据用户屏幕图片和用户历史操作，理解用户正在做的事情，判断其与主题的相关程度，并转化为标准化的文字记录。\n"
+            "你是一名\"智能操作记录员\"。你的任务是根据用户屏幕图片和用户历史操作，理解用户正在做的事情，判断其与主题的相关程度，并转化为标准化的文字记录。\n"
             "核心原则：\n"
             "\n"
             " 相关度评分标准\n"
@@ -88,25 +99,20 @@ class QwenVisionRecorder(BaseVisionAnalyzer):
             "   [内容描述] <简要总结重要内容，如教程流程、报错信息或关键参数>\n"
             "   [主题相关度] <输出 1 到 5 的整数，1 表示完全不相关，5 表示高度相关>\n"
             "3. 语言风格：保持客观、简练，直接使用中文记录。\n"
-            "4. 异常兜底：无论输入如何，只输出上述规定的格式内容，严禁输出'好的'、'这是记录'等废话。"
+            "4. 异常兜底：无论输入如何，只输出上述规定的格式内容，严禁输出\"好的\"、\"这是记录\"等废话。"
         )
     
     def initialize(self) -> bool:
-        """初始化 Qwen 记录器"""
-        if not self.api_key:
-            logger.error("未配置 API Key")
-            return False
-
-        if self.api_key == "sk-你的实际APIKey在这里":
-            logger.error("请在配置文件中设置有效的 API Key")
-            return False
-        
+        """初始化 Ollama 分析器"""
         try:
-            dashscope.api_key = self.api_key
+            # 尝试导入并检查连接
+            client = self._get_client()
+            
+            # 标记为已初始化（main.py 会打印统一日志）
             self._initialized = True
             return True
         except Exception as e:
-            logger.error(f"QwenVision 初始化失败: {e}")
+            logger.error(f"{self.name} 初始化失败: {e}")
             return False
     
     def _read_topic(self) -> str:
@@ -118,7 +124,11 @@ class QwenVisionRecorder(BaseVisionAnalyzer):
             topic_path.write_text(default_topic, encoding='utf-8')
             return default_topic
         
-        return topic_path.read_text(encoding='utf-8').strip()
+        try:
+            return topic_path.read_text(encoding='utf-8').strip()
+        except Exception as e:
+            logger.warning(f"读取主题失败: {e}")
+            return "默认任务主题"
     
     def _read_recent_history(self, max_lines: int = 20) -> str:
         """读取日志文件末尾的 N 行作为历史记录"""
@@ -142,22 +152,30 @@ class QwenVisionRecorder(BaseVisionAnalyzer):
             logger.warning(f"读取历史记录失败: {e}")
             return "读取历史记录出错。"
     
+    def _save_temp_image(self, image: Image.Image) -> str:
+        """保存 PIL Image 为临时文件路径，返回路径"""
+        import tempfile
+        import os
+        
+        # 创建临时文件
+        temp_dir = tempfile.gettempdir()
+        temp_path = os.path.join(temp_dir, f"ollama_temp_{int(time.time()*1000)}.jpg")
+        
+        # 保存图片
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+        image.save(temp_path, format='JPEG', quality=85)
+        
+        return temp_path
+    
     def _parse_relevance(self, text: str) -> Optional[int]:
         """
         从 AI 输出中解析相关度评分
-        
-        Args:
-            text: AI 返回的文本
-            
-        Returns:
-            相关度评分 (1-5)，如果解析失败返回 None
         """
         import re
-        # 匹配 [主题相关度] 后面的数字
         match = re.search(r'\[主题相关度\]\s*(\d+)', text)
         if match:
             score = int(match.group(1))
-            # 确保在有效范围内
             if 1 <= score <= 5:
                 return score
         return None
@@ -181,21 +199,11 @@ class QwenVisionRecorder(BaseVisionAnalyzer):
             return False
     
     def _append_all_responses(self, content: str, relevance: int = None) -> bool:
-        """
-        将所有 AI 响应追加到调试日志文件
-        
-        Args:
-            content: AI 返回的原始内容
-            relevance: 相关度评分（如果有）
-            
-        Returns:
-            是否写入成功
-        """
+        """将所有 AI 响应追加到调试日志文件"""
         if not self.save_all_responses:
             return True
             
         try:
-            # 生成调试日志路径：将 log.txt 改为 all_responses.txt
             log_path = Path(self.log_file)
             all_responses_path = log_path.parent / "all_responses.txt"
             all_responses_path.parent.mkdir(parents=True, exist_ok=True)
@@ -219,37 +227,21 @@ class QwenVisionRecorder(BaseVisionAnalyzer):
         current_topic = context.get('topic') if context else self._read_topic()
         history_log = context.get('history') if context else self._read_recent_history()
         
-        # 将图片转为 base64
-        image_base64 = pil_image_to_base64(image)
+        # 保存临时图片文件
+        temp_image_path = self._save_temp_image(image)
         
-        user_prompt = f"""
-        # 当前任务上下文
-        **操作主题**: {current_topic}
-        **历史操作记录**: 
-        {history_log}
-
-        # 当前屏幕图像分析指令
-        请分析上传的屏幕截图，结合"操作主题"和"历史操作记录"，执行以下思考步骤：
-        1. 状态识别: 识别当前屏幕显示的具体界面、弹窗、报错信息或进度状态。
-        2. 变化检测: 对比“历史操作记录”，判断当前画面是否代表了新的操作步骤、结果反馈或状态流转。如果是纯加载、空白或无变化，标记为无效。
-        3. 价值评估: 判断该画面内容对于完成"{current_topic}"这一主题是否有实质性的记录价值。
-        4. 生成记录: 
-        - 严格按三行格式输出（标题、内容描述、相关度1-5）
-
-        注意：不要输出开场白或结束语。
-                        """
-                        
+        # 构建消息 - 使用官方 ollama 库格式
+        prompt_text = (
+            f"【当前任务主题】{current_topic}\n"
+            f"【历史操作记录】\n{history_log}\n\n"
+            "请分析图片并严格按三行格式输出([标题]\n、[内容描述]\n、[相关度]\n)"
+        )
+        
         messages = [
             {
-                "role": "system",
-                "content": [{"text": self.system_prompt}]
-            },
-            {
                 "role": "user",
-                "content": [
-                    {"image": image_base64},
-                    {"text": user_prompt}
-                ]
+                "content": prompt_text,
+                "images": [temp_image_path]  # 使用文件路径
             }
         ]
         
@@ -268,45 +260,53 @@ class QwenVisionRecorder(BaseVisionAnalyzer):
         """
         self._ensure_initialized()
         
+        temp_image_path = None
         try:
+            client = self._get_client()
             messages = self._build_messages(image, context)
             
-            response = MultiModalConversation.call(
+            # 调用 Ollama API
+            response = client(
                 model=self.model_name,
                 messages=messages,
-                temperature=self.temperature,
-                top_p=self.top_p
+                options={
+                    "temperature": self.temperature,
+                    "top_p": self.top_p,
+                }
             )
             
-            if response.status_code == 200:
-                raw_text = response.output.choices[0].message.content[0]['text'].strip()
-                
-                # 清理 Markdown 标记
-                clean_text = raw_text.replace("```markdown", "").replace("```", "").strip()
-                
-                # 解析相关度
-                relevance = self._parse_relevance(clean_text)
-                
-                # 保存所有 AI 响应到调试日志
-                self._append_all_responses(clean_text, relevance)
-                
-                # 检查相关度是否达到阈值
-                if relevance is not None and relevance < self.min_relevance:
-                    logger.info(f"[🤖 AI] 相关度 {relevance} < {self.min_relevance}，跳过记录")
-                    self._record_success()
-                    return None
-                
+            # 处理响应
+            raw_text = response.message.content.strip()
+            
+            # 清理可能的 Markdown 标记
+            clean_text = raw_text.replace("```markdown", "").replace("```", "").strip()
+            
+            # 解析相关度
+            relevance = self._parse_relevance(clean_text)
+            
+            # 保存所有 AI 响应
+            self._append_all_responses(clean_text, relevance)
+            
+            # 检查相关度是否达到阈值
+            if relevance is not None and relevance < self.min_relevance:
+                logger.info(f"[🤖 AI] 相关度 {relevance} < {self.min_relevance}，跳过记录")
                 self._record_success()
-                return clean_text
-            else:
-                logger.warning(f"API 调用失败: {response.code} - {response.message}")
-                self._record_error()
                 return None
+            
+            self._record_success()
+            return clean_text
                 
         except Exception as e:
             logger.error(f"分析图片时发生异常: {e}")
             self._record_error()
             return None
+        finally:
+            # 清理临时文件
+            if temp_image_path and Path(temp_image_path).exists():
+                try:
+                    Path(temp_image_path).unlink()
+                except:
+                    pass
     
     def analyze_from_file(self, image_path: str, context: Dict[str, Any] = None) -> Optional[str]:
         """
@@ -319,7 +319,7 @@ class QwenVisionRecorder(BaseVisionAnalyzer):
         Returns:
             分析结果
         """
-        if not os.path.exists(image_path):
+        if not Path(image_path).exists():
             logger.warning(f"图片文件不存在: {image_path}")
             return None
         
@@ -330,28 +330,8 @@ class QwenVisionRecorder(BaseVisionAnalyzer):
             logger.error(f"打开图片失败: {e}")
             self._record_error()
             return None
-    
-    def analyze_and_save(self, image: Image.Image, context: Dict[str, Any] = None) -> bool:
-        """
-        分析图片并自动保存到日志
-        
-        Args:
-            image: PIL Image 对象
-            context: 上下文信息
-            
-        Returns:
-            是否成功保存
-        """
-        result = self.analyze(image, context)
-        
-        if result and result != "NO_RECORD":
-            return self._append_to_log(result)
-        
-        return False
 
 
 # 注册到工厂
-AnalyzerFactory.register('qwen', QwenVisionRecorder)
-
-
-
+from .base import AnalyzerFactory
+AnalyzerFactory.register('ollama', OllamaVisionAnalyzer)

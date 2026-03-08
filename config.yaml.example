@@ -1,0 +1,50 @@
+# ============================================
+# Auto Flow Note 配置文件
+# ============================================
+
+# 阿里云配置
+aliyun:
+  # 在此处填入你的百炼 API Key
+  api_key: "sk-xxxxxxxxxxxxxxxx"
+  
+  # 使用的模型名称，默认qwen3.5-flash
+  default_model: "qwen3.5-flash"
+
+# Ollama 本地模型配置
+ollama:
+  # Ollama 服务地址
+  base_url: "http://localhost:11434"
+  
+  # 模型名称（需要已下载的视觉模型）
+  # 如: qwen3-vl:2b, qwen2.5-vl:7b, llava:7b
+  model: "qwen3-vl:2b"
+
+# 截图配置
+capture:
+  interval: 0.5           # 截屏间隔(秒)，越小越精确但文件越多
+  delay_start: 3          # 启动延迟(秒)，给时间切换窗口
+  duration: 10            # 录制总时长(秒)
+  queue_size: 50          # 截图队列最大长度
+
+# 变化检测配置
+detector:
+  similarity_threshold: 6  # 哈希相似度阈值，越小越严格(0-20)
+  min_change_area: 500    # 最小变化面积(像素)，小于此面积的忽略
+  diff_threshold: 5       # 像素差值阈值 (0-255)
+  use_morphology: true    # 是否使用形态学去噪
+  save_debug: false       # 是否保存调试中间图片
+
+# AI 分析配置
+analyzer:
+  # 分析器类型: "qwen" (阿里云) 或 "ollama" (本地)
+  type: "ollama"
+  
+  temperature: 0.1        # 生成温度 (0-1)
+  top_p: 0.8             # top_p 采样参数
+  max_history_lines: 20  # 读取的历史记录行数
+  min_relevance: 3       # 最小相关度阈值 (1-5)，低于此值的记录将被跳过
+  save_all_responses: true  # 是否保存所有 AI 响应到调试日志
+
+# 其他配置
+settings:
+  timeout: 60            # API 超时时间(秒)
