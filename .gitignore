@@ -25,6 +25,7 @@ __pycache__/
 extracted_keyframes/
 extracted_keyframes*/
 recordings/
+outputs/
 
 # 配置文件
 config.yaml

@@ -3,6 +3,7 @@ import time
 import threading
 import queue
 import win32gui
+import win32api
 from PIL import ImageGrab, ImageDraw, ImageFont
 import imagehash
 from datetime import datetime
@@ -56,9 +57,14 @@ def find_change_region(img_curr, img_prev, save_prefix=None):
     # 4. 二值化 (只保留显著变化的像素)
     _, thresh = cv2.threshold(diff, DIFF_THRESHOLD, 255, cv2.THRESH_BINARY)
 
-    # 5. 形态学操作 (膨胀 + 腐蚀) -> 连接断裂的变化区域，去除噪点
-    kernel = np.ones((5,5),np.uint8)
-    dilated_thresh = cv2.dilate(thresh, kernel, iterations=2)
+    # 5. 开运算去除小白点噪声 (先腐蚀后膨胀)
+    # 使用小核去除孤立的小白点
+    kernel_open = np.ones((3, 3), np.uint8)
+    opened_thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel_open, iterations=1)
+
+    # 6. 形态学操作 (膨胀 + 腐蚀) -> 连接断裂的变化区域，去除噪点
+    kernel = np.ones((5, 5), np.uint8)
+    dilated_thresh = cv2.dilate(opened_thresh, kernel, iterations=2)
     closed_thresh = cv2.morphologyEx(dilated_thresh, cv2.MORPH_CLOSE, kernel, iterations=1)
 
     # ===== 保存中间状态图 =====
@@ -70,17 +76,20 @@ def find_change_region(img_curr, img_prev, save_prefix=None):
         # 保存二值化图
         cv2.imwrite(f"{save_prefix}_thresh.png", thresh)
         
+        # 保存开运算后的图 (新增，用于调试)
+        cv2.imwrite(f"{save_prefix}_opened.png", opened_thresh)
+        
         # 保存形态学处理后的图
         cv2.imwrite(f"{save_prefix}_closed.png", closed_thresh)
     # ==========================
 
-    # 6. 查找轮廓
+    # 7. 查找轮廓
     contours, _ = cv2.findContours(closed_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     if not contours:
         return None
 
-    # 7. 筛选所有满足最小面积要求的轮廓，返回所有边界框
+    # 8. 筛选所有满足最小面积要求的轮廓，返回所有边界框
     bboxes = []
     for contour in contours:
         area = cv2.contourArea(contour)
