@@ -1,4 +1,5 @@
 # 🌊 AutoFlowNote
+## 一款智能无感化笔记生成工具
 ### **Your Screen, Your Story, Automatically Told.**
 
 > **无感捕捉 · 智能理解 · 自动成稿**  
