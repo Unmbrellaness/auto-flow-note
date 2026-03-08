@@ -34,14 +34,178 @@
 
 ---
 
-## 🎬 工作原理
+## 🚀 快速开始
 
-```mermaid
-graph LR
-    A[🖥️ 用户操作屏幕] -->|静默监听 | B(📸 自动关键帧提取)
-    B --> C{🧠 Qwen3.5-flash 智能分析}
-    C -->|评分 4-5 | D[🔥 核心步骤：直接展示]
-    C -->|评分 2-3 | E[ℹ️ 过渡步骤：折叠详情]
-    C -->|评分 1 | F[🔇 噪音画面：深度归档]
-    D & E & F --> G[📝 生成 AutoFlow 报告.md]
+### 1. 环境要求
+
+- Python 3.8+
+- Windows 10/11（需要支持屏幕截图）
+- 阿里云百炼 API Key（或本地 Ollama 服务）
+
+### 2. 安装步骤
+
+#### 2.1 克隆项目
+
+```bash
+git clone https://github.com/your-repo/auto-flow-note.git
+cd auto-flow-note
 ```
+
+#### 2.2 创建虚拟环境（推荐）
+
+```bash
+# 创建虚拟环境
+python -m venv venv
+
+# 激活虚拟环境
+# Windows:
+venv\Scripts\activate
+# Linux/Mac:
+source venv/bin/activate
+```
+
+#### 2.3 安装依赖
+
+```bash
+pip install -r requirements.txt
+```
+
+#### 2.4 配置 API
+
+复制配置示例文件并修改：
+
+```bash
+copy config.yaml.example config.yaml
+```
+
+编辑 `config.yaml`，填入你的阿里云 API Key：
+
+```yaml
+# 阿里云配置
+aliyun:
+  api_key: "sk-你的API-Key"
+  default_model: "qwen3.5-flash"
+```
+
+**注意**：也可以使用本地 Ollama 模型，修改配置：
+
+```yaml
+# Ollama 本地模型配置
+ollama:
+  base_url: "http://localhost:11434"
+  model: "qwen3-vl:2b"
+
+# 分析器类型: "qwen" (阿里云) 或 "ollama" (本地)
+analyzer:
+  type: "ollama"
+```
+
+### 3. 运行程序
+
+```bash
+python main.py
+```
+
+程序会：
+1. 倒计时 3 秒（给你时间切换到目标窗口）
+2. 开始自动录制屏幕
+3. 检测画面变化并保存关键帧
+4. 使用 AI 分析每帧内容
+5. 生成带图片的 Markdown 报告
+
+### 4. 查看结果
+
+运行结束后，在 `outputs/session_YYYYMMDD_HHMMSS/` 目录下查看：
+
+```
+session_20260308_221647/
+├── raw/           # 原始截图
+├── annotated/     # 标注图片（含变化区域框选）
+├── debug/         # 调试图片（变化检测中间结果）
+├── md_images/    # Markdown 报告使用的图片
+├── logs/         # 运行日志和 AI 分析记录
+├── README.md     # 生成的图文报告
+└── topic.txt     # 录制主题
+```
+
+---
+
+## ⚙️ 配置说明
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| `capture.interval` | 截屏间隔(秒) | 0.5 |
+| `capture.duration` | 录制总时长(秒) | 60 |
+| `detector.similarity_threshold` | 哈希相似度阈值 (0-20，越小越严格) | 6 |
+| `detector.min_change_area` | 最小变化面积(像素) | 500 |
+| `analyzer.type` | 分析器类型：`qwen` 或 `ollama` | qwen |
+| `analyzer.min_relevance` | 最小相关度阈值 (1-5) | 3 |
+
+---
+
+## 📁 项目结构
+
+```
+auto-flow-note/
+├── main.py                 # 主程序入口
+├── config.yaml             # 配置文件
+├── requirements.txt         # Python 依赖
+├── src/
+│   ├── analyzer/           # AI 分析模块
+│   │   ├── base.py         # 分析器抽象基类
+│   │   ├── vision_recorder.py  # 阿里云 Qwen 分析器
+│   │   └── ollama_vision.py    # Ollama 本地分析器
+│   ├── capture/            # 屏幕捕获模块
+│   │   ├── screen_capturer.py  # 屏幕截图
+│   │   └── change_detector.py  # 变化检测
+│   └── utils/              # 工具模块
+│       ├── config_loader.py    # 配置加载
+│       └── logger.py           # 日志工具
+├── tools/                  # 辅助工具脚本
+└── outputs/                # 输出目录（自动生成）
+```
+
+---
+
+## 🛠️ 高级用法
+
+### 使用命令行参数
+
+```bash
+python main.py --config custom_config.yaml --duration 30 --debug
+```
+
+参数说明：
+- `--config`: 指定配置文件路径
+- `--duration`: 覆盖配置文件中的录制时长
+- `--debug`: 开启调试模式，保存中间过程图片
+
+### 切换 AI 模型
+
+在 `config.yaml` 中修改：
+
+```yaml
+# 阿里云模型
+analyzer:
+  type: "qwen"
+  # 可选: qwen3.5-flash, qwen3.5-flash-2026-02-23, qwen-vl-plus 等
+
+# 或本地 Ollama 模型
+analyzer:
+  type: "ollama"
+  # 需要先下载模型: ollama pull qwen3-vl:2b
+```
+
+---
+
+## 📝 许可
+
+Apache License 2.0 - see [LICENSE](LICENSE) for details.
+
+---
+
+## 🙏 致谢
+
+- [Qwen](https://qwenlm.github.io/) - 阿里云千问多模态大模型
+- [Ollama](https://ollama.ai/) - 本地大模型运行框架
+- [OpenCV](https://opencv.org/) - 计算机视觉库
