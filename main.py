@@ -332,8 +332,11 @@ class AutoFlowNoteApp:
                 logger.info(f"[🤖 AI] #{saved_count:04d} 原始结果: {repr(result)[:200]}")
                 
                 if result:
-                    # 自动保存到日志
-                    self.analyzer._append_to_log(result)
+                    # 构建图片路径
+                    raw_path = self.raw_dir / f"shot_{saved_count:04d}_{safe_time}.png"
+                    
+                    # 自动保存到日志（包含图片路径）
+                    self.analyzer._append_to_log(result, image_path=str(raw_path))
                     # 截取前50字符展示
                     preview = result.split('\n')[0][:50]
                     logger.info(f"[🤖 AI] #{saved_count:04d}: {preview}...")
@@ -430,9 +433,9 @@ class AutoFlowNoteApp:
         logger.info(f"📝 日志文件: {self.logs_dir / 'log.txt'}")
     
     def _generate_markdown(self):
-        """生成最终的 Markdown 文件"""
-        # 读取日志文件
-        log_file = self.logs_dir / "log.txt"
+        """生成最终的 Markdown 文件（图文格式）"""
+        import shutil
+        from datetime import datetime
         
         # 读取主题
         topic = ""
@@ -445,31 +448,153 @@ class AutoFlowNoteApp:
         if ai_log_file.exists():
             ai_content = ai_log_file.read_text(encoding='utf-8')
         
-        # 生成 Markdown 内容
-        md_content = f"""# {topic if topic else '自动化操作记录'}
-
-## 基本信息
-
-- **录制时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-- **录制时长**: {time.time() - self._start_time:.1f} 秒
-
-## 主题
-
-{topic if topic else '未指定'}
-
-## AI 分析记录
-
-{ai_content if ai_content else '无 AI 分析记录'}
-
-## 输出文件
-
-- 原始截图: `raw/`
-- 标注图片: `annotated/`
-- 调试图片: `debug/`
-- 运行日志: `logs/`
-"""
+        # 创建 md_images 文件夹
+        md_images_dir = self.work_dir / "md_images"
+        md_images_dir.mkdir(exist_ok=True)
+        
+        # 解析 AI 分析日志，提取每条记录
+        entries = []
+        if ai_content:
+            # 按 [时间] 分割记录
+            records = ai_content.split('[时间]')
+            for record in records:
+                if not record.strip():
+                    continue
+                
+                lines = record.strip().split('\n')
+                
+                # 解析时间（第一行格式：[时间] 2026-03-08 22:53:55）
+                timestamp_str = ""
+                relevance = 0
+                title = ""
+                description = ""
+                image_path = ""
+                
+                for idx, line in enumerate(lines):
+                    line = line.strip()
+                    
+                    # [时间] 2026-03-08 22:53:55
+                    if line.startswith('[时间]'):
+                        timestamp_str = line.replace('[时间]', '').strip()
+                        continue
+                    
+                    # [图片] outputs\session_xxx\raw\xxx.png
+                    if line.startswith('[图片]'):
+                        image_path = line.replace('[图片]', '').strip()
+                        # 处理 Windows 反斜杠
+                        image_path = image_path.replace('\\', '/')
+                        continue
+                    
+                    # [标题] 标题内容
+                    if line.startswith('[标题]'):
+                        title = line.replace('[标题]', '').strip()
+                        continue
+                    
+                    # [内容描述] 描述内容
+                    if line.startswith('[内容描述]'):
+                        description = line.replace('[内容描述]', '').strip()
+                        continue
+                    
+                    # [主题相关度] 5
+                    if line.startswith('[主题相关度]'):
+                        try:
+                            relevance = int(line.replace('[主题相关度]', '').strip())
+                        except:
+                            pass
+                        continue
+                
+                # 只有有标题或描述才记录
+                if title or description:
+                    entries.append({
+                        'timestamp': timestamp_str,
+                        'title': title,
+                        'description': description,
+                        'image_path': image_path,
+                        'relevance': relevance
+                    })
+                    
+                    logger.debug(f"[解析] {timestamp_str} - {title} (图片: {image_path[:50] if image_path else '无'}...)")
+        
+        # 构建 Markdown 内容
+        md_lines = []
+        md_lines.append(f"# {topic if topic else '自动化操作记录'}")
+        md_lines.append("")
+        md_lines.append("## 基本信息")
+        md_lines.append("")
+        md_lines.append(f"- **录制时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        md_lines.append(f"- **录制时长**: {time.time() - self._start_time:.1f} 秒")
+        md_lines.append(f"- **记录条目数**: {len(entries)}")
+        md_lines.append("")
+        md_lines.append("## 操作记录")
+        md_lines.append("")
+        
+        for i, entry in enumerate(entries):
+            # 直接使用日志中的图片路径
+            matched_img = None
+            if entry.get('image_path'):
+                # 图片路径可能是相对路径（如 outputs/session_xxx/raw/xxx.png）
+                # 尝试多种方式解析路径
+                img_path = Path(entry['image_path'])
+                
+                # 1. 如果是绝对路径，直接使用
+                if not img_path.is_absolute():
+                    # 2. 相对于项目根目录（当前工作目录）
+                    img_path = Path.cwd() / img_path
+                
+                if img_path.exists():
+                    matched_img = img_path
+                else:
+                    logger.warning(f"图片不存在: {img_path}")
+            
+            # 构建标题（包含时间戳和相关度）
+            title_text = entry['title'] if entry['title'] else f'记录 #{i+1}'
+            if entry.get('timestamp'):
+                title_text = f"{entry['timestamp']} - {title_text}"
+            
+            # 添加相关度标签
+            relevance_emoji = ""
+            relevance = entry.get('relevance', 0)
+            if relevance >= 4:
+                relevance_emoji = " ⭐⭐"
+            elif relevance >= 3:
+                relevance_emoji = " ⭐"
+            
+            if matched_img:
+                # 复制图片到 md_images 文件夹
+                new_img_name = f"img_{i+1:04d}_{matched_img.name}"
+                new_img_path = md_images_dir / new_img_name
+                shutil.copy2(matched_img, new_img_path)
+                
+                # 添加图片引用
+                md_lines.append(f"### {title_text}{relevance_emoji}")
+                md_lines.append("")
+                md_lines.append(f"![{title_text}](md_images/{new_img_name})")
+                md_lines.append("")
+            elif entry['title']:
+                # 没有图片但有标题
+                md_lines.append(f"### {title_text}{relevance_emoji}")
+                md_lines.append("")
+            
+            if entry['description']:
+                md_lines.append("**内容描述**:")
+                md_lines.append("")
+                md_lines.append(entry['description'])
+                md_lines.append("")
+            
+            md_lines.append("---")
+            md_lines.append("")
+        
+        # 添加文件说明
+        md_lines.append("## 输出文件")
+        md_lines.append("")
+        md_lines.append(f"- 原始截图: `raw/`")
+        md_lines.append(f"- 标注图片: `annotated/`")
+        md_lines.append(f"- 调试图片: `debug/`")
+        md_lines.append(f"- Markdown 图片: `md_images/`")
+        md_lines.append(f"- 运行日志: `logs/`")
         
         # 保存 Markdown 文件
+        md_content = '\n'.join(md_lines)
         md_file = self.work_dir / "README.md"
         md_file.write_text(md_content, encoding='utf-8')
         logger.info(f"📝 Markdown 文件已生成: {md_file}")

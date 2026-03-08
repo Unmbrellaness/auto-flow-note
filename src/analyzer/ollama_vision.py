@@ -180,7 +180,7 @@ class OllamaVisionAnalyzer(BaseVisionAnalyzer):
                 return score
         return None
     
-    def _append_to_log(self, content: str) -> bool:
+    def _append_to_log(self, content: str, image_path: str = None) -> bool:
         """将新记录追加到日志文件"""
         try:
             log_path = Path(self.log_file)
@@ -190,6 +190,9 @@ class OllamaVisionAnalyzer(BaseVisionAnalyzer):
             
             with open(log_path, 'a', encoding='utf-8') as f:
                 f.write(f"[时间] {timestamp}\n")
+                # 如果有图片路径，添加到日志中
+                if image_path:
+                    f.write(f"[图片] {image_path}\n")
                 f.write(content)
                 f.write("\n\n")
             
