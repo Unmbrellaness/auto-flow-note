@@ -51,6 +51,12 @@ class QwenVisionRecorder(BaseVisionAnalyzer):
         self.temperature = config.get('temperature', 0.1)
         self.top_p = config.get('top_p', 0.8)
         
+        # 相关度阈值：只有 >= 此值的记录才会被保存
+        self.min_relevance = config.get('min_relevance', 3)
+        
+        # 是否保存所有 AI 响应（用于调试）
+        self.save_all_responses = config.get('save_all_responses', True)
+        
         # 文件路径配置
         self.topic_file = config.get('topic_file', 'topic.txt')
         self.log_file = config.get('log_file', 'outputs/logs/log.txt')
@@ -77,13 +83,12 @@ class QwenVisionRecorder(BaseVisionAnalyzer):
             "\n"
             " ⚡ 处理规则\n"
             "1. 价值过滤：只记录有价值的操作步骤、关键配置、报错详情或解决方案。严格忽略纯进度条、加载动画、空白页或无实质变化的中间状态。\n"
-            "2. 静默处理：如果当前画面没有任何值得记录的内容（即触发了原则 1 的忽略条件），请直接输出字符串 'NO_RECORD'，不要输出其他任何文字。\n"
-            "3. 格式规范：若有内容记录，严格遵循以下三行格式，不要包含任何 JSON、代码块标记（如 ```）、Markdown 符号（如 **）或额外的解释性文字：\n"
+            "2. 格式规范：严格遵循以下三行格式，不要包含任何 JSON、代码块标记（如 ```）、Markdown 符号（如 **）或额外的解释性文字：\n"
             "   [标题] <用一句简短的话概括用户操作>\n"
             "   [内容描述] <简要总结重要内容，如教程流程、报错信息或关键参数>\n"
             "   [主题相关度] <输出 1 到 5 的整数，1 表示完全不相关，5 表示高度相关>\n"
-            "4. 语言风格：保持客观、简练，直接使用中文记录。\n"
-            "5. 异常兜底：无论输入如何，只输出上述规定的格式内容，严禁输出‘好的’、‘这是记录’等废话。"
+            "3. 语言风格：保持客观、简练，直接使用中文记录。\n"
+            "4. 异常兜底：无论输入如何，只输出上述规定的格式内容，严禁输出'好的'、'这是记录'等废话。"
         )
     
     def initialize(self) -> bool:
@@ -138,6 +143,26 @@ class QwenVisionRecorder(BaseVisionAnalyzer):
             logger.warning(f"读取历史记录失败: {e}")
             return "读取历史记录出错。"
     
+    def _parse_relevance(self, text: str) -> Optional[int]:
+        """
+        从 AI 输出中解析相关度评分
+        
+        Args:
+            text: AI 返回的文本
+            
+        Returns:
+            相关度评分 (1-5)，如果解析失败返回 None
+        """
+        import re
+        # 匹配 [主题相关度] 后面的数字
+        match = re.search(r'\[主题相关度\]\s*(\d+)', text)
+        if match:
+            score = int(match.group(1))
+            # 确保在有效范围内
+            if 1 <= score <= 5:
+                return score
+        return None
+    
     def _append_to_log(self, content: str) -> bool:
         """将新记录追加到日志文件"""
         try:
@@ -154,6 +179,39 @@ class QwenVisionRecorder(BaseVisionAnalyzer):
             return True
         except Exception as e:
             logger.error(f"写入日志失败: {e}")
+            return False
+    
+    def _append_all_responses(self, content: str, relevance: int = None) -> bool:
+        """
+        将所有 AI 响应追加到调试日志文件
+        
+        Args:
+            content: AI 返回的原始内容
+            relevance: 相关度评分（如果有）
+            
+        Returns:
+            是否写入成功
+        """
+        if not self.save_all_responses:
+            return True
+            
+        try:
+            # 生成调试日志路径：将 log.txt 改为 all_responses.txt
+            log_path = Path(self.log_file)
+            all_responses_path = log_path.parent / "all_responses.txt"
+            all_responses_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+            relevance_str = f"[相关度: {relevance}]" if relevance is not None else "[相关度: N/A]"
+            
+            with open(all_responses_path, 'a', encoding='utf-8') as f:
+                f.write(f"[时间] {timestamp} {relevance_str}\n")
+                f.write(content)
+                f.write("\n\n")
+            
+            return True
+        except Exception as e:
+            logger.error(f"写入全部响应日志失败: {e}")
             return False
     
     def _build_messages(self, image: Image.Image, context: Dict[str, Any] = None) -> list:
@@ -227,10 +285,17 @@ class QwenVisionRecorder(BaseVisionAnalyzer):
                 # 清理 Markdown 标记
                 clean_text = raw_text.replace("```markdown", "").replace("```", "").strip()
                 
-                # 检查是否为 NO_RECORD
-                if "NO_RECORD" in clean_text:
+                # 解析相关度
+                relevance = self._parse_relevance(clean_text)
+                
+                # 保存所有 AI 响应到调试日志
+                self._append_all_responses(clean_text, relevance)
+                
+                # 检查相关度是否达到阈值
+                if relevance is not None and relevance < self.min_relevance:
+                    logger.info(f"[🤖 AI] 相关度 {relevance} < {self.min_relevance}，跳过记录")
                     self._record_success()
-                    return "NO_RECORD"
+                    return None
                 
                 self._record_success()
                 return clean_text

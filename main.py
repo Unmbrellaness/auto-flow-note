@@ -296,16 +296,17 @@ class AutoFlowNoteApp:
                 
                 analyzed_count += 1
                 
-                if result and result != "NO_RECORD":
+                # 调试：显示完整 AI 输出
+                logger.info(f"[🤖 AI] #{saved_count:04d} 原始结果: {repr(result)[:200]}")
+                
+                if result:
                     # 自动保存到日志
                     self.analyzer._append_to_log(result)
                     # 截取前50字符展示
                     preview = result.split('\n')[0][:50]
                     logger.info(f"[🤖 AI] #{saved_count:04d}: {preview}...")
-                elif result == "NO_RECORD":
-                    logger.debug(f"[🤖 AI] #{saved_count:04d} 无有效内容")
                 else:
-                    logger.warning(f"[🤖 AI] #{saved_count:04d} 分析返回空")
+                    logger.info(f"[🤖 AI] #{saved_count:04d} 相关度低于阈值，跳过记录")
                     
             except Exception as e:
                 logger.error(f"[🤖 AI] 分析失败: #{saved_count:04d} - {e}")
@@ -318,7 +319,7 @@ class AutoFlowNoteApp:
     
     def _print_stats(self):
         """打印统计信息"""
-        logger.info("\n" + "=" * 50)
+        logger.info("=" * 50)
         logger.info("📊 统计信息:")
         logger.info(f"   截图器: {self.capturer.stats}")
         logger.info(f"   检测器: {self.detector.stats}")
