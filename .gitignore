@@ -34,5 +34,6 @@ config.yaml
 *.txt
 *.md
 !README.md
+logs/app.log
 
 
